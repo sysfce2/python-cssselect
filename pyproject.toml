@@ -56,9 +56,9 @@ tag = true
 filename = "cssselect/__init__.py"
 
 [[tool.bumpversion.files]]
-filename = "NEWS"
+filename = "CHANGES"
 search = "^Unreleased\\.$"
-replace = "Released on ({now:%Y-%m-%d})"
+replace = "Released on {now:%Y-%m-%d}."
 regex = true
 
 [tool.coverage.run]
