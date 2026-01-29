@@ -55,6 +55,12 @@ tag = true
 [[tool.bumpversion.files]]
 filename = "cssselect/__init__.py"
 
+[[tool.bumpversion.files]]
+filename = "CHANGES"
+search = "^Unreleased\\.$"
+replace = "Released on {now:%Y-%m-%d}."
+regex = true
+
 [tool.coverage.run]
 branch = true
 source = ["cssselect"]
