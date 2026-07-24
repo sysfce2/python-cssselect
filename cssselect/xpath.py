@@ -641,18 +641,30 @@ class GenericTranslator:
     ) -> XPathExpr:
         return self.xpath_nth_child_function(xpath, function, last=True)
 
+    @staticmethod
+    def _check_of_type_element(xpath: XPathExpr, pseudo: str) -> None:
+        """Raise an exception if an -of-type pseudo-class can't be used with
+        the given element.
+
+        For "*" and namespace wildcards like "ns:*" the type of the element is
+        not known, and counting same-type siblings cannot be expressed as an
+        XPath 1.0 node test.
+        """
+        element = xpath.element
+        if element == "*" or element.endswith(":*"):
+            css_element = element.replace(":", "|")
+            raise ExpressionError(f"{css_element}:{pseudo} is not implemented")
+
     def xpath_nth_of_type_function(
         self, xpath: XPathExpr, function: Function
     ) -> XPathExpr:
-        if xpath.element == "*":
-            raise ExpressionError("*:nth-of-type() is not implemented")
+        self._check_of_type_element(xpath, "nth-of-type()")
         return self.xpath_nth_child_function(xpath, function, add_name_test=False)
 
     def xpath_nth_last_of_type_function(
         self, xpath: XPathExpr, function: Function
     ) -> XPathExpr:
-        if xpath.element == "*":
-            raise ExpressionError("*:nth-last-of-type() is not implemented")
+        self._check_of_type_element(xpath, "nth-last-of-type()")
         return self.xpath_nth_child_function(
             xpath, function, last=True, add_name_test=False
         )
@@ -698,22 +710,26 @@ class GenericTranslator:
         return xpath.add_condition("count(following-sibling::*) = 0")
 
     def xpath_first_of_type_pseudo(self, xpath: XPathExpr) -> XPathExpr:
-        if xpath.element == "*":
-            raise ExpressionError("*:first-of-type is not implemented")
+        self._check_of_type_element(xpath, "first-of-type")
         return xpath.add_condition(f"count(preceding-sibling::{xpath.element}) = 0")
 
     def xpath_last_of_type_pseudo(self, xpath: XPathExpr) -> XPathExpr:
-        if xpath.element == "*":
-            raise ExpressionError("*:last-of-type is not implemented")
+        self._check_of_type_element(xpath, "last-of-type")
         return xpath.add_condition(f"count(following-sibling::{xpath.element}) = 0")
 
     def xpath_only_child_pseudo(self, xpath: XPathExpr) -> XPathExpr:
-        return xpath.add_condition("count(parent::*/child::*) = 1")
+        # Count siblings, not the parent's children: the root element has
+        # no parent, but it has no siblings either, so it must match.
+        return xpath.add_condition(
+            "count(preceding-sibling::*) = 0 and count(following-sibling::*) = 0"
+        )
 
     def xpath_only_of_type_pseudo(self, xpath: XPathExpr) -> XPathExpr:
-        if xpath.element == "*":
-            raise ExpressionError("*:only-of-type is not implemented")
-        return xpath.add_condition(f"count(parent::*/child::{xpath.element}) = 1")
+        self._check_of_type_element(xpath, "only-of-type")
+        return xpath.add_condition(
+            f"count(preceding-sibling::{xpath.element}) = 0 "
+            f"and count(following-sibling::{xpath.element}) = 0"
+        )
 
     def xpath_empty_pseudo(self, xpath: XPathExpr) -> XPathExpr:
         return xpath.add_condition("not(*) and not(string-length())")

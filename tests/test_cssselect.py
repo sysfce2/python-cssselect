@@ -662,8 +662,12 @@ class TestCssselect(unittest.TestCase):
         assert xpath("e:last-child") == ("e[count(following-sibling::*) = 0]")
         assert xpath("e:first-of-type") == ("e[count(preceding-sibling::e) = 0]")
         assert xpath("e:last-of-type") == ("e[count(following-sibling::e) = 0]")
-        assert xpath("e:only-child") == ("e[count(parent::*/child::*) = 1]")
-        assert xpath("e:only-of-type") == ("e[count(parent::*/child::e) = 1]")
+        assert xpath("e:only-child") == (
+            "e[count(preceding-sibling::*) = 0 and count(following-sibling::*) = 0]"
+        )
+        assert xpath("e:only-of-type") == (
+            "e[count(preceding-sibling::e) = 0 and count(following-sibling::e) = 0]"
+        )
         assert xpath("e:empty") == ("e[not(*) and not(string-length())]")
         assert xpath("e:EmPTY") == ("e[not(*) and not(string-length())]")
         assert xpath("e:root") == ("e[not(parent::*)]")
@@ -728,7 +732,8 @@ class TestCssselect(unittest.TestCase):
             "e[(descendant::f) and (count(following-sibling::e) = 1)]"
         )
         assert xpath("e:has(f):only-of-type") == (
-            "e[(descendant::f) and (count(parent::*/child::e) = 1)]"
+            "e[(descendant::f) and (count(preceding-sibling::e) = 0 "
+            "and count(following-sibling::e) = 0)]"
         )
         with pytest.raises(ExpressionError):
             xpath("*:has(f):first-of-type")
@@ -819,6 +824,16 @@ class TestCssselect(unittest.TestCase):
             xpath(":nth-of-type(1)")
         with pytest.raises(ExpressionError, match=r"\*:nth-last-of-type\(\)"):
             xpath(":nth-last-of-type(1)")
+        with pytest.raises(ExpressionError):
+            xpath("ns|*:first-of-type")
+        with pytest.raises(ExpressionError):
+            xpath("ns|*:only-of-type")
+        with pytest.raises(ExpressionError):
+            xpath("ns|*:last-of-type")
+        with pytest.raises(ExpressionError):
+            xpath("ns|*:nth-of-type(1)")
+        with pytest.raises(ExpressionError):
+            xpath("ns|*:nth-last-of-type(1)")
         with pytest.raises(ExpressionError):
             xpath(":nth-child(n-)")
         with pytest.raises(ExpressionError):
@@ -1314,9 +1329,13 @@ class TestCssselect(unittest.TestCase):
         assert pcss("span:only-child") == ["foobar-span"]
         assert pcss("li div:only-child") == ["li-div"]
         assert pcss("div *:only-child") == ["li-div", "foobar-span"]
+        # The root element has no siblings, so it matches :only-child
+        # (just like :first-child and :last-child)
+        assert pcss("html:only-child") == ["html"]
         with pytest.raises(ExpressionError):
             pcss("p *:only-of-type")
         assert pcss("p:only-of-type") == ["paragraph"]
+        assert pcss("html:only-of-type") == ["html"]
         assert pcss("a:empty", "a:EMpty") == ["name-anchor"]
         assert pcss("li:empty") == ["third-li", "fourth-li", "fifth-li", "sixth-li"]
         assert pcss(":root", "html:root") == ["html"]
