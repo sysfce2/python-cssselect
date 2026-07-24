@@ -161,6 +161,15 @@ class TestCssselect(unittest.TestCase):
         assert parse_many("div:has(div.foo)") == [
             "Relation[Element[div]:has(Selector[Class[Element[div].foo]])]"
         ]
+        assert parse_many("div:has(> div.foo)") == [
+            "Relation[Element[div]:has(> Selector[Class[Element[div].foo]])]"
+        ]
+        assert parse_many("div:has(+ div.foo)") == [
+            "Relation[Element[div]:has(+ Selector[Class[Element[div].foo]])]"
+        ]
+        assert parse_many("div:has(~ div.foo)") == [
+            "Relation[Element[div]:has(~ Selector[Class[Element[div].foo]])]"
+        ]
         assert parse_many("div:is(.foo, #bar)") == [
             "Matching[Element[div]:is(Class[Element[*].foo], Hash[Element[*]#bar])]"
         ]
@@ -315,6 +324,12 @@ class TestCssselect(unittest.TestCase):
         assert specificity(":is(.foo, #bar)") == (1, 0, 0)
         assert specificity(":is(:hover, :visited)") == (0, 1, 0)
         assert specificity(":where(:hover, :visited)") == (0, 0, 0)
+        # The compound selector the pseudo-class applies to counts too
+        assert specificity("div:is(#a)") == (1, 0, 1)
+        assert specificity("div:is(.f, .g)") == (0, 1, 1)
+        assert specificity("div.e:is(.f)") == (0, 2, 1)
+        assert specificity("div:where(.x)") == (0, 0, 1)
+        assert specificity("div.e:where(.x)") == (0, 1, 1)
 
         assert specificity("foo:empty") == (0, 1, 1)
         assert specificity("foo:before") == (0, 0, 2)
@@ -331,7 +346,12 @@ class TestCssselect(unittest.TestCase):
         def css2css(css: str, res: str | None = None) -> None:
             selectors = parse(css)
             assert len(selectors) == 1
-            assert selectors[0].canonical() == (res or css)
+            canonical = selectors[0].canonical()
+            assert canonical == (res or css)
+            # canonical() output must round-trip through the parser
+            reparsed = parse(canonical)
+            assert len(reparsed) == 1
+            assert reparsed[0].canonical() == canonical
 
         css2css("*")
         css2css(" foo", "foo")
@@ -356,15 +376,61 @@ class TestCssselect(unittest.TestCase):
         css2css(":has(*)")
         css2css(":has(foo)")
         css2css(":has(*.foo)", ":has(.foo)")
+        # combinators inside :has() are kept
+        css2css(":has(> foo)")
+        css2css(":has(~ foo)")
+        css2css(":has(+ foo)")
+        css2css("div:has(> div.foo)")
         css2css(":is(#bar, .foo)")
         css2css(":is(:focused, :visited)")
         css2css(":where(:focused, :visited)")
+        # a universal selector argument is kept
+        css2css(":is(*)")
+        css2css("div:is(*)")
+        css2css(":is(*, .foo)")
+        css2css(":where(*)")
         css2css("foo:empty")
         css2css("foo::before")
         css2css("foo:empty::before")
         css2css('::name(arg + "val" - 3)', "::name(arg+'val'-3)")
         css2css("#lorem + foo#ipsum:first-child > bar::first-line")
         css2css("foo > *")
+        # a leading universal selector is only redundant in a compound
+        # selector
+        css2css("* > foo")
+        css2css("* foo")
+        # a single space for the descendant combinator
+        css2css("div p")
+        css2css("div \t\n p", "div p")
+        # strings are escaped as CSS, not as Python literals
+        css2css(r'[foo="x\a y"]', r"[foo='x\a y']")
+        css2css(r'[foo="\\"]', r"[foo='\\']")
+        css2css('[foo="\'"]', "[foo='\\'']")
+        # identifiers are escaped as CSS on output
+        css2css(r"di\[v")
+        css2css(r"e.cl\@ss")
+        css2css(r".fo\.o")
+        css2css(r"#a\.b")
+        css2css(r"[h\]ref]")
+        css2css(r"[foo=ba\.r]")
+        css2css(r"n\.s|div")
+        css2css(r"\31 23")  # an identifier cannot start with a bare digit
+        css2css(r"e\1 x")  # control characters use hexadecimal escapes
+        css2css(r"di\5b v", r"di\[v")  # hexadecimal escapes are canonicalized
+        css2css(r".\-")  # an identifier consisting of a single "-" is escaped
+        css2css(r".-x")  # an identifier just starting with "-" isn't escaped
+        css2css(r"e\0 x", "e\N{REPLACEMENT CHARACTER}x")  # NUL becomes U+FFFD
+        # a leading "--" is escaped: the tokenizer cannot parse it unescaped
+        css2css(r".\--x")
+        css2css(r".\--")
+        css2css(r"e\--x", "e--x")  # but a non-leading "--" needs no escape
+        # pseudo-class, functional pseudo-class and pseudo-element names
+        # are escaped too
+        css2css(r":fo\.o")
+        css2css(r":\31 23")
+        css2css(r":fo\.o(2)")
+        css2css(r"::fo\.o")
+        css2css(r"::fo\.o(2)")
 
     def test_parse_errors(self) -> None:
         def get_error(css: str) -> str | None:
