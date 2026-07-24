@@ -36,10 +36,12 @@ from cssselect import (
 from cssselect.parser import (
     Function,
     FunctionalPseudoElement,
+    Matching,
     PseudoElement,
     Token,
     parse_series,
     tokenize,
+    unescape_ident,
 )
 from cssselect.xpath import XPathExpr
 
@@ -179,6 +181,16 @@ class TestCssselect(unittest.TestCase):
         assert parse_many(":where(:hover, :visited)") == [
             "SpecificityAdjustment[Element[*]:where(Pseudo[Element[*]:hover],"
             " Pseudo[Element[*]:visited])]"
+        ]
+        assert parse_many(
+            ":is(.foo, .bar)",
+            ":is(.foo,.bar)",
+            ":is(.foo ,.bar)",
+            ":matches(.foo, .bar)",
+        ) == ["Matching[Element[*]:is(Class[Element[*].foo], Class[Element[*].bar])]"]
+        assert parse_many(":where(.foo, .bar)", ":where(.foo,.bar)") == [
+            "SpecificityAdjustment[Element[*]:where(Class[Element[*].foo],"
+            " Class[Element[*].bar])]"
         ]
         assert parse_many("td ~ th") == ["CombinedSelector[Element[td] ~ Element[th]]"]
         assert parse_many(":scope > foo") == [
@@ -475,7 +487,11 @@ class TestCssselect(unittest.TestCase):
         assert get_error(":lang(fr)") is None
         assert get_error(":lang(fr") == ("Expected an argument, got <EOF at 8>")
         assert get_error(':contains("foo') == ("Unclosed string at 10")
+        # A raw newline terminates the string match without closing it.
+        assert get_error('[a="b\nc"]') == ("Invalid string at 3")
         assert get_error("foo!") == ("Expected selector, got <DELIM '!' at 3>")
+        # An unclosed comment runs to the end of the input and is ignored.
+        assert get_error("a /* unclosed") is None
 
         # Mis-placed pseudo-elements
         assert get_error("a:before:empty") == (
@@ -488,6 +504,9 @@ class TestCssselect(unittest.TestCase):
             "Got pseudo-element ::before inside :not() at 12"
         )
         assert get_error(":not(:not(a))") == ("Got nested :not()")
+        # :not() only takes a single simple selector as an argument
+        assert get_error(":not(a b)") == ("Expected ')', got <S ' ' at 6>")
+        assert get_error(":not(a, b)") == ("Expected ')', got <DELIM ',' at 6>")
         # A :not() inside :is()/:where()/:matches() is not a nested :not()
         # and gets its own message
         assert get_error(":is(:not(a))") == (
@@ -509,6 +528,10 @@ class TestCssselect(unittest.TestCase):
         assert get_error(":where(a b)") == (
             "Expected an argument, got <IDENT 'b' at 9>"
         )
+        assert get_error(":is(a") == ("Expected an argument, got <EOF at 5>")
+        assert get_error(":is(a,") == ("Expected selector, got <EOF at 6>")
+        assert get_error(":is(a,)") == ("Expected selector, got <DELIM ')' at 6>")
+        assert get_error(":where(a") == ("Expected an argument, got <EOF at 8>")
         assert get_error(":scope > div :scope header") == (
             'Got pseudo-class ":scope" not at the start of a selector'
         )
@@ -577,6 +600,9 @@ class TestCssselect(unittest.TestCase):
             "e[@foo and substring(@foo, string-length(@foo)-2) = 'bar']"
         )
         assert xpath('e[foo*="bar"]') == ("e[@foo and contains(@foo, 'bar')]")
+        assert xpath("e[foo!=bar]") == ("e[not(@foo) or @foo != 'bar']")
+        # An empty value for != only requires the attribute to differ.
+        assert xpath("e[foo!='']") == ("e[@foo != '']")
         assert xpath('e[hreflang|="en"]') == (
             "e[@hreflang and (@hreflang = 'en' or starts-with(@hreflang, 'en-'))]"
         )
@@ -651,7 +677,7 @@ class TestCssselect(unittest.TestCase):
         assert xpath("e:has(~ f)") == "e[following-sibling::f]"
         assert (
             xpath("e:has(+ f)")
-            == "e[following-sibling::*[(name() = 'f') and (position() = 1)]]"
+            == "e[following-sibling::*[(self::f) and (position() = 1)]]"
         )
         assert xpath("e:has(> f.bar)") == (
             "e[./f[@class and contains("
@@ -668,7 +694,7 @@ class TestCssselect(unittest.TestCase):
         assert xpath("e:has(+ f.bar)") == (
             "e[following-sibling::*[((@class and contains("
             "concat(' ', normalize-space(@class), ' '), ' bar ')) "
-            "and (name() = 'f')) and (position() = 1)]]"
+            "and (self::f)) and (position() = 1)]]"
         )
         assert xpath("e:has(+ .bar)") == (
             "e[following-sibling::*[(@class and contains("
@@ -686,7 +712,7 @@ class TestCssselect(unittest.TestCase):
         assert xpath("e:not(:has(> a))") == "e[not(./a)]"
         assert xpath("e:not(:has(~ a))") == "e[not(following-sibling::a)]"
         assert xpath("e:not(:has(+ a))") == (
-            "e[not(following-sibling::*[(name() = 'a') and (position() = 1)])]"
+            "e[not(following-sibling::*[(self::a) and (position() = 1)])]"
         )
         # Element-reading pseudo-classes chained after :has()
         assert xpath("e:has(f):first-of-type") == (
@@ -720,7 +746,7 @@ class TestCssselect(unittest.TestCase):
         assert xpath("e f") == ("e/descendant-or-self::*/f")
         assert xpath("e > f") == ("e/f")
         assert xpath("e + f") == (
-            "e/following-sibling::*[(name() = 'f') and (position() = 1)]"
+            "e/following-sibling::*[(self::f) and (position() = 1)]"
         )
         assert xpath("e ~ f") == ("e/following-sibling::f")
         assert xpath("e ~ f:nth-child(3)") == (
@@ -729,8 +755,39 @@ class TestCssselect(unittest.TestCase):
         assert xpath("div#container p") == (
             "div[@id = 'container']/descendant-or-self::*/p"
         )
-        assert xpath("e:where(foo)") == "e[name() = 'foo']"
-        assert xpath("e:where(foo, bar)") == "e[(name() = 'foo') or (name() = 'bar')]"
+        assert xpath("e:where(foo)") == "e[self::foo]"
+        assert xpath("e:where(foo, bar)") == "e[(self::foo) or (self::bar)]"
+        assert xpath("e:is(.a,.b)") == xpath("e:is(.a, .b)")
+        assert xpath("e:is(*, .foo)") == "e"
+        assert xpath("e:where(*, foo)") == "e"
+        assert xpath("e.foo:is(.a, .b)") == (
+            "e[(@class and contains("
+            "concat(' ', normalize-space(@class), ' '), ' foo ')) and "
+            "((@class and contains("
+            "concat(' ', normalize-space(@class), ' '), ' a ')) or "
+            "(@class and contains("
+            "concat(' ', normalize-space(@class), ' '), ' b ')))]"
+        )
+        assert xpath("e:is(:has(f))") == "e[descendant::f]"
+        assert xpath("e:where(:has(f))") == "e[descendant::f]"
+        # :matches() is an alias of :is()
+        assert xpath("e:matches(foo, bar)") == "e[(self::foo) or (self::bar)]"
+        assert xpath("e:matches(.a, .b)") == xpath("e:is(.a, .b)")
+        # A type selector in predicate position is a node test, not a
+        # literal name() comparison: a prefixed name must resolve through
+        # the namespace prefix mapping, and an unprefixed name must not
+        # match elements in a default namespace (a bare "f" does not).
+        assert xpath("e:is(f)") == "e[self::f]"
+        assert xpath("*:not(f)") == "*[not(self::f)]"
+        assert xpath("ns|*") == "ns:*"
+        assert xpath("e:is(ns|*)") == "e[self::ns:*]"
+        assert xpath("e:where(ns|*)") == "e[self::ns:*]"
+        assert xpath("*:not(ns|*)") == "*[not(self::ns:*)]"
+        assert xpath("e:is(ns|f)") == "e[self::ns:f]"
+        assert xpath("*:not(ns|f)") == "*[not(self::ns:f)]"
+        assert xpath("x + ns|f") == (
+            "x/following-sibling::*[(self::ns:f) and (position() = 1)]"
+        )
 
         # Invalid characters in XPath element names
         assert xpath(r"di\a0 v") == ("*[name() = 'di v']")  # di\xa0v
@@ -743,7 +800,7 @@ class TestCssselect(unittest.TestCase):
         # :scope, alone and in a compound selector
         assert xpath(":scope") == "*[position() = 1]"
         assert xpath("*:scope") == "*[position() = 1]"
-        assert xpath("div:scope") == "*[(name() = 'div') and (position() = 1)]"
+        assert xpath("div:scope") == "*[(self::div) and (position() = 1)]"
         assert xpath(".foo:scope") == (
             "*[(@class and contains("
             "concat(' ', normalize-space(@class), ' '), ' foo ')) "
@@ -772,10 +829,80 @@ class TestCssselect(unittest.TestCase):
             xpath(":lorem(ipsum)")
         with pytest.raises(ExpressionError):
             xpath("::lorem-ipsum")
+        with pytest.raises(ExpressionError, match=r":contains\(\)"):
+            xpath(":contains(1)")
+        with pytest.raises(ExpressionError, match=r":lang\(\)"):
+            xpath(":lang(1)")
         with pytest.raises(TypeError):
             GenericTranslator().css_to_xpath(4)  # type: ignore[arg-type]
         with pytest.raises(TypeError):
             GenericTranslator().selector_to_xpath("foo")  # type: ignore[arg-type]
+
+    def test_translation_customization_api(self) -> None:
+        # XPathExpr.add_star_prefix() constrains the context to a single
+        # parent; it is part of the customization API rather than used by
+        # the built-in translation.
+        expr = XPathExpr("foo")
+        expr.add_star_prefix()
+        assert expr.path == "foo*/"
+
+        # join() drops a redundant "*/" star prefix from the joined path.
+        left = XPathExpr("a")
+        star = XPathExpr()
+        star.add_star_prefix()
+        assert star.path == "*/"
+        left.join(" ", star)
+        # The "*/" of ``star`` is omitted; only ``str(left) + combiner`` remains.
+        assert left.path == "a* "
+
+        # An unknown parsed-tree type has no xpath_<type>() handler.
+        class Bogus:
+            pass
+
+        with pytest.raises(ExpressionError, match="Bogus is not supported"):
+            GenericTranslator().xpath(Bogus())  # type: ignore[arg-type]
+
+        # lower_case_attribute_values is an extension point: when enabled,
+        # attribute values are lower-cased in the generated XPath.
+        class LowerValues(GenericTranslator):
+            lower_case_attribute_values = True
+
+        assert LowerValues().css_to_xpath("[Foo=BAR]", prefix="") == "*[@Foo = 'bar']"
+
+        # A member of an :is()/:where() selector list that translates to a
+        # path (rather than a predicate) cannot be embedded in the outer
+        # predicate and is rejected. The parser does not currently produce
+        # such an argument, so build the Matching node directly.
+        base = parse("x")[0].parsed_tree
+        combined = parse("a b")[0].parsed_tree
+        matching = Matching(base, [combined])
+        with pytest.raises(
+            ExpressionError, match=r"not supported inside :is\(\) and :where\(\)"
+        ):
+            GenericTranslator().xpath(matching)
+
+    def test_add_name_test(self) -> None:
+        # Directly exercise XPathExpr.add_name_test(), part of the
+        # customization API: translation never feeds it a name unusable in
+        # a node test (xpath_element() compares those with name() itself),
+        # but a subclass can, and then the name() fallback must be used.
+        def name_test(element: str) -> str:
+            xpath = XPathExpr(element=element)
+            xpath.add_name_test()
+            return str(xpath)
+
+        # Safe names become node tests, resolved through the namespace
+        # prefix mapping when prefixed.
+        assert name_test("f") == "*[self::f]"
+        assert name_test("ns:f") == "*[self::ns:f]"
+        assert name_test("ns:*") == "*[self::ns:*]"
+        # Names not usable in a node test fall back to a name() comparison,
+        # whether the local name or the prefix is at fault.
+        assert name_test("di v") == "*[name() = 'di v']"
+        assert name_test("ns:di v") == "*[name() = 'ns:di v']"
+        assert name_test("di v:f") == "*[name() = 'di v:f']"
+        # The universal selector needs no test at all.
+        assert name_test("*") == "*"
 
     def test_unicode(self) -> None:
         css = ".a\xc1b"
@@ -820,6 +947,11 @@ class TestCssselect(unittest.TestCase):
         assert css_to_xpath("*[aval=\"'\\20\r\n '\"]") == (
             """descendant-or-self::*[@aval = "'  '"]"""
         )
+        # A code point beyond the Unicode range is replaced with U+FFFD.
+        assert css_to_xpath(r"\110000") == ("descendant-or-self::*[name() = '\ufffd']")
+        # unescape_ident() resolves both unicode and simple escapes.
+        assert unescape_ident(r"\41 B") == "AB"
+        assert unescape_ident(r"\-foo") == "-foo"
 
     def test_xpath_pseudo_elements(self) -> None:
         class CustomTranslator(GenericTranslator):
@@ -961,6 +1093,8 @@ class TestCssselect(unittest.TestCase):
         assert series("5") == (0, 5)
         assert series("foo") is None
         assert series("n+") is None
+        # String tokens are not allowed in a series.
+        assert series('"foo"') is None
         # ASCII-case-insensitive
         assert series("2N+1") == (2, 1)
         assert series("EVEN") == (2, 0)
@@ -994,6 +1128,13 @@ class TestCssselect(unittest.TestCase):
             "eighth",
         ]
         assert langid(":lang(es)") == []
+
+        # The HTML translator requires a string or ident argument too.
+        with pytest.raises(ExpressionError, match=r":lang\(\)"):
+            HTMLTranslator().css_to_xpath(":lang(1)")
+        # The XHTML variant keeps element and attribute names case-sensitive.
+        assert HTMLTranslator(xhtml=True).css_to_xpath("A") == ("descendant-or-self::A")
+        assert HTMLTranslator().css_to_xpath("A") == ("descendant-or-self::a")
 
     def test_argument_types(self) -> None:
         class CustomTranslator(GenericTranslator):
@@ -1262,9 +1403,23 @@ class TestCssselect(unittest.TestCase):
         assert pcss("li:has(div):first-of-type") == []
         assert pcss("ol:has(li):first-of-type") == ["first-ol"]
         assert pcss("p:has(b):only-of-type") == ["paragraph"]
-        assert pcss(":is(#first-li, #second-li)") == ["first-li", "second-li"]
+        assert pcss(":is(#first-li, #second-li)", ":is(#first-li,#second-li)") == [
+            "first-li",
+            "second-li",
+        ]
         assert pcss("a:is(#name-anchor, #tag-anchor)") == ["name-anchor", "tag-anchor"]
-        assert pcss(":is(.c)") == ["first-ol", "third-li", "fourth-li"]
+        assert pcss(":is(.c)", ":matches(.c)") == ["first-ol", "third-li", "fourth-li"]
+        assert pcss("li:is(*, .c)") == [
+            "first-li",
+            "second-li",
+            "third-li",
+            "fourth-li",
+            "fifth-li",
+            "sixth-li",
+            "seventh-li",
+        ]
+        assert pcss("ol.a:is(.nonexistent)") == []
+        assert pcss("ol.a:is(.b, .nonexistent)") == ["first-ol"]
         assert pcss("ol.a.b.c > li.c:nth-child(3)") == ["third-li"]
 
         # Invalid characters in XPath element names, should not crash
@@ -1298,6 +1453,53 @@ class TestCssselect(unittest.TestCase):
             "checkbox-checked",
             "checkbox-disabled-checked",
         ]
+
+    def test_select_with_namespace(self) -> None:
+        # The document prefix (n) deliberately differs from the selector
+        # prefix (ns): matching must go through the namespace mapping, not
+        # compare the prefixed name as a string.
+        document = etree.XML(
+            '<r xmlns:n="urn:x"><n:a id="ns-el"/><b id="plain"/><n:c id="ns-el2"/></r>'
+        )
+        css_to_xpath = GenericTranslator().css_to_xpath
+
+        def pcss(css: str) -> list[str]:
+            items = typing.cast(
+                "list[etree._Element]",
+                document.xpath(css_to_xpath(css), namespaces={"ns": "urn:x"}),
+            )
+            return [element.get("id", "nil") for element in items]
+
+        assert pcss("ns|*") == ["ns-el", "ns-el2"]
+        assert pcss(":is(ns|*)") == ["ns-el", "ns-el2"]
+        assert pcss("*:not(ns|*)") == ["nil", "plain"]
+        assert pcss("ns|a") == ["ns-el"]
+        assert pcss(":is(ns|a)") == ["ns-el"]
+        assert pcss(":is(b, ns|a)") == ["ns-el", "plain"]
+        assert pcss("*:not(ns|a)") == ["nil", "plain", "ns-el2"]
+        assert pcss("b + ns|c") == ["ns-el2"]
+
+    def test_select_with_default_namespace(self) -> None:
+        # A bare "f" translates to an unprefixed XPath node test, which
+        # only matches elements in *no* namespace, so it cannot see
+        # elements in a default namespace. Predicate positions (:is(),
+        # :not(), "+") must agree with that, not compare name() (which
+        # would match such elements by their unprefixed qualified name).
+        document = etree.XML('<r xmlns="urn:d"><x id="x"/><f id="dns-f"/></r>')
+        css_to_xpath = GenericTranslator().css_to_xpath
+
+        def pcss(css: str) -> list[str]:
+            items = typing.cast(
+                "list[etree._Element]", document.xpath(css_to_xpath(css))
+            )
+            return [element.get("id", "nil") for element in items]
+
+        assert pcss("f") == []
+        assert pcss(":is(f)") == []
+        assert pcss("x + f") == []
+        # ... and since "f" does not match the default-namespaced <f>,
+        # :not(f) must not exclude it.
+        assert pcss("*:not(f)") == ["nil", "x", "dns-f"]
 
     def test_select_shakespeare(self) -> None:
         document = html.document_fromstring(HTML_SHAKESPEARE)

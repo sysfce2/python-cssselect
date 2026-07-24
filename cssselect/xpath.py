@@ -37,7 +37,7 @@ from cssselect.parser import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     # typing.Self requires Python 3.11
     from typing_extensions import Self
@@ -82,7 +82,19 @@ class XPathExpr:
         if self.element == "*":
             # We weren't doing a test anyway
             return
-        self.add_condition(f"name() = {GenericTranslator.xpath_literal(self.element)}")
+        prefix, colon, local = self.element.partition(":")
+        if is_safe_name(prefix) and (not colon or local == "*" or is_safe_name(local)):
+            # A node test, not a name() comparison: name() returns the
+            # qualified name as written in the document, which would bypass
+            # the XPath prefix mapping for a prefixed name like "ns:f" or
+            # "ns:*" (from the CSS "ns|f" or "ns|*"), and would match
+            # elements in a default namespace for an unprefixed name (which
+            # the node test emitted for a bare "f" selector does not).
+            self.add_condition(f"self::{self.element}")
+        else:
+            self.add_condition(
+                f"name() = {GenericTranslator.xpath_literal(self.element)}"
+            )
         self.element = "*"
 
     def add_star_prefix(self) -> None:
@@ -316,22 +328,37 @@ class GenericTranslator:
         return method(xpath, right)
 
     def xpath_matching(self, matching: Matching) -> XPathExpr:
-        xpath = self.xpath(matching.selector)
-        exprs = [self.xpath(selector) for selector in matching.selector_list]
-        for e in exprs:
-            e.add_name_test()
-            if e.condition:
-                xpath.add_condition(e.condition, "or")
-        return xpath
+        return self._xpath_add_selector_list_condition(
+            self.xpath(matching.selector), matching.selector_list
+        )
 
     def xpath_specificityadjustment(self, matching: SpecificityAdjustment) -> XPathExpr:
-        xpath = self.xpath(matching.selector)
-        exprs = [self.xpath(selector) for selector in matching.selector_list]
-        for e in exprs:
+        return self._xpath_add_selector_list_condition(
+            self.xpath(matching.selector), matching.selector_list
+        )
+
+    def _xpath_add_selector_list_condition(
+        self, xpath: XPathExpr, selector_list: Iterable[Tree]
+    ) -> XPathExpr:
+        """Add a condition matching any selector of the list
+        (for :is() and :where())."""
+        condition = ""
+        for e in (self.xpath(selector) for selector in selector_list):
+            if e.path:
+                # E.g. a :has() argument: it translates to a path, which
+                # cannot be embedded into a predicate of the outer expression.
+                raise ExpressionError(
+                    ":has() is not supported inside :is() and :where()"
+                )
             e.add_name_test()
-            if e.condition:
-                xpath.add_condition(e.condition, "or")
-        return xpath
+            if not e.condition:
+                # This argument matches any element, so the whole selector
+                # list does too: it adds no condition.
+                return xpath
+            condition = (
+                f"({condition}) or ({e.condition})" if condition else e.condition
+            )
+        return xpath.add_condition(condition)
 
     def xpath_function(self, function: Function) -> XPathExpr:
         """Translate a functional pseudo-class."""
@@ -411,7 +438,12 @@ class GenericTranslator:
             safe = safe and bool(is_safe_name(selector.namespace))
         xpath = self.xpathexpr_cls(element=element)
         if not safe:
-            xpath.add_name_test()
+            # Not usable as an XPath name test (e.g. an escaped identifier
+            # like di\a0 v): compare the serialized name instead. Done here
+            # rather than through add_name_test(), which would mistake a ":"
+            # inside such a name for a namespace prefix separator.
+            xpath.add_condition(f"name() = {self.xpath_literal(element)}")
+            xpath.element = "*"
         return xpath
 
     # CombinedSelector: dispatch by combinator
