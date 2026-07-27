@@ -4,7 +4,7 @@ Changelog
 Version 1.5.0
 -------------
 
-Unreleased.
+Released on 2026-07-27.
 
 *   **Backward-incompatible change**: removed the no longer used
     ``closing_combiner`` and ``has_inner_condition`` arguments of
