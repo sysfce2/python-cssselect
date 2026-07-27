@@ -1,6 +1,48 @@
 Changelog
 =========
 
+Version 1.5.0
+-------------
+
+Unreleased.
+
+*   **Backward-incompatible change**: removed the no longer used
+    ``closing_combiner`` and ``has_inner_condition`` arguments of
+    ``XPathExpr.join()``. They were added for ``:has()`` support which no
+    longer needs them.
+
+*   Fixed and improved support for the following selector features:
+
+    * ``:has()`` pseudo-class.
+
+    * ``:is()``, ``:where()`` and ``:matches()`` pseudo-classes.
+
+    * ``:scope`` pseudo-class.
+
+    * ``:only-child`` and ``:only-of-type`` pseudo-classes.
+
+    * Namespaces (``|``).
+
+    * ``An+B`` arguments of pseudo-classes.
+
+    * Type selectors in predicates.
+
+*   Fixed some issues with the ``Selector.canonical()`` method.
+
+*   Improved the ``Element.__repr__()`` and ``Relation.__repr__()`` methods.
+
+*   Fixed ``Selector.specificity()`` calculation for the ``:is()``,
+    ``:where()`` and ``:matches()`` pseudo-classes.
+
+*   Fixed issues with whitespace and comment handling inside some selectors.
+
+*   Fixed some exception types and messages.
+
+*   Improved the docs about the ``:has()``, ``:is()`` and ``:where()``
+    pseudo-classes and the `!=`` attribute operator.
+
+*   Test improvements.
+
 Version 1.4.0
 -------------
 
