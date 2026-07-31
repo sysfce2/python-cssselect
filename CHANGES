@@ -1,14 +1,6 @@
 Changelog
 =========
 
-Version 1.6.0
--------------
-
-Unreleased.
-
-*   The ``:not()`` pseudo-class now accepts a *complex selector*, e.g.
-    ``:not(a.important > b)``.
-
 Version 1.5.0
 -------------
 
