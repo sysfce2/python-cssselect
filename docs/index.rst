@@ -118,6 +118,9 @@ be implemented):
   *compound selector* built only from type, class and universal selectors
   (e.g. ``:has(> a.important)``). Anything else is unsupported, e.g. an ID
   (``:has(#id)``), or a selector list (``:has(a, b)``).
+* The ``:not()`` pseudo-class with a *complex selector* argument, e.g.
+  ``:not(a.important[rel] > b)``. Limitation: it takes a single argument, so a
+  selector list is unsupported (e.g. ``:not(a, b)``).
 
 These are non-standard extensions:
 
@@ -127,9 +130,6 @@ These are non-standard extensions:
   ``:not([foo=bar])``, except for an empty value: ``[foo!='']`` matches only
   elements that do have a ``foo`` attribute and whose value is not empty,
   while ``:not([foo=''])`` also matches elements without a ``foo`` attribute.
-* ``:not()`` accepts a *sequence of simple selectors*, not just single
-  *simple selector*. For example, ``:not(a.important[rel])`` is allowed,
-  even though the negation contains 3 *simple selectors*.
 
 .. _an early draft: http://www.w3.org/TR/2001/CR-css3-selectors-20011113/#content-selectors
 

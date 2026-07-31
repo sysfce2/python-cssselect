@@ -162,6 +162,19 @@ class TestCssselect(unittest.TestCase):
             "div:not( div.foo )",
             "div:not(div.foo /* comment */)",
         ) == ["Negation[Element[div]:not(Class[Element[div].foo])]"]
+        assert parse_many("div:not(a b)") == [
+            "Negation[Element[div]:not(CombinedSelector[Element[a] "
+            "<followed> Element[b]])]"
+        ]
+        assert parse_many("div:not(a > b)") == [
+            "Negation[Element[div]:not(CombinedSelector[Element[a] > Element[b]])]"
+        ]
+        assert parse_many("div:not(a + b)") == [
+            "Negation[Element[div]:not(CombinedSelector[Element[a] + Element[b]])]"
+        ]
+        assert parse_many("div:not(a ~ b)") == [
+            "Negation[Element[div]:not(CombinedSelector[Element[a] ~ Element[b]])]"
+        ]
         assert parse_many("div:has(div.foo)") == [
             "Relation[Element[div]:has(Selector[Class[Element[div].foo]])]"
         ]
@@ -330,6 +343,8 @@ class TestCssselect(unittest.TestCase):
         assert specificity(":not([foo])") == (0, 1, 0)
         assert specificity(":not(:empty)") == (0, 1, 0)
         assert specificity(":not(#foo)") == (1, 0, 0)
+        assert specificity(":not(foo bar)") == (0, 0, 2)
+        assert specificity(":not(* > .foo)") == (0, 1, 0)
 
         assert specificity(":has(*)") == (0, 0, 0)
         assert specificity(":has(foo)") == (0, 0, 1)
@@ -388,6 +403,10 @@ class TestCssselect(unittest.TestCase):
         css2css(":not(*[foo])", ":not([foo])")
         css2css(":not(:empty)")
         css2css(":not(#foo)")
+        css2css(":not(foo > bar)")
+        css2css(":not(*.foo bar)", ":not(.foo bar)")
+        # a "*" that is a whole compound selector is kept
+        css2css(":not(* > bar)")
         css2css(":has(*)")
         css2css(":has(foo)")
         css2css(":has(*.foo)", ":has(.foo)")
@@ -517,9 +536,13 @@ class TestCssselect(unittest.TestCase):
             "Got pseudo-element ::before inside :not() at 12"
         )
         assert get_error(":not(:not(a))") == ("Got nested :not()")
-        # :not() only takes a single simple selector as an argument
-        assert get_error(":not(a b)") == ("Expected ')', got <IDENT 'b' at 7>")
+        assert get_error(":not(a > :before)") == (
+            "Got pseudo-element ::before inside :not() at 16"
+        )
+        # :not() only takes a single complex selector as an argument
         assert get_error(":not(a, b)") == ("Expected ')', got <DELIM ',' at 6>")
+        assert get_error(":not(a") == ("Expected ')', got <EOF at 6>")
+        assert get_error(":not(a >") == ("Expected selector, got <EOF at 8>")
         # Whitespace around a :not() argument is not a combinator
         assert get_error(":not(a )") is None
         assert get_error(":not( a )") is None
@@ -736,6 +759,30 @@ class TestCssselect(unittest.TestCase):
         assert xpath("e:not(:has(+ a))") == (
             "e[not(following-sibling::*[(self::a) and (position() = 1)])]"
         )
+        # A complex selector in :not() is matched against the element itself,
+        # walking combinators through reverse axes.
+        assert xpath("e:not(a b)") == "e[not(self::b and ancestor::*[self::a])]"
+        assert xpath("e:not(a > b)") == "e[not(self::b and parent::*[self::a])]"
+        assert xpath("e:not(a + b)") == (
+            "e[not(self::b and preceding-sibling::*[1][self::a])]"
+        )
+        assert xpath("e:not(a ~ b)") == (
+            "e[not(self::b and preceding-sibling::*[self::a])]"
+        )
+        assert xpath("e:not(a > b > c)") == (
+            "e[not(self::c and parent::*[self::b and parent::*[self::a]])]"
+        )
+        assert xpath("e:not(.a > #b)") == (
+            "e[not(@id = 'b' and parent::*[@class and contains("
+            "concat(' ', normalize-space(@class), ' '), ' a ')])]"
+        )
+        # A "*" compound selector only constrains the axis
+        assert xpath("e:not(* > b)") == "e[not(self::b and parent::*)]"
+        assert xpath("e:not(a > *)") == "e[not(parent::*[self::a])]"
+        assert xpath("e:not(* *)") == "e[not(ancestor::*)]"
+        assert xpath("e:not(a:has(> b) c)") == (
+            "e[not(self::c and ancestor::*[(./b) and (self::a)])]"
+        )
         # Element-reading pseudo-classes chained after :has()
         assert xpath("e:has(f):first-of-type") == (
             "e[(descendant::f) and (count(preceding-sibling::e) = 0)]"
@@ -808,6 +855,7 @@ class TestCssselect(unittest.TestCase):
         assert xpath("*:not(ns|*)") == "*[not(self::ns:*)]"
         assert xpath("e:is(ns|f)") == "e[self::ns:f]"
         assert xpath("*:not(ns|f)") == "*[not(self::ns:f)]"
+        assert xpath("*:not(ns|f > f)") == "*[not(self::f and parent::*[self::ns:f])]"
         assert xpath("x + ns|f") == (
             "x/following-sibling::*[(self::ns:f) and (position() = 1)]"
         )
@@ -1435,6 +1483,23 @@ class TestCssselect(unittest.TestCase):
             "sixth-li",
             "seventh-li",
         ]
+        assert pcss("div:not(#outer-div div)") == ["outer-div", "foobar-div"]
+        assert pcss("li:not(ol.a > li.c)") == [
+            "first-li",
+            "second-li",
+            "fifth-li",
+            "sixth-li",
+            "seventh-li",
+        ]
+        assert pcss("li:not(#second-li + li)") == [
+            "first-li",
+            "second-li",
+            "fourth-li",
+            "fifth-li",
+            "sixth-li",
+            "seventh-li",
+        ]
+        assert pcss("li:not(#second-li ~ li)") == ["first-li", "second-li"]
         assert pcss("li:has(div):nth-of-type(2)") == ["second-li"]
         assert pcss("li:has(div):first-of-type") == []
         assert pcss("ol:has(li):first-of-type") == ["first-ol"]

@@ -157,6 +157,14 @@ class GenericTranslator:
         "~": "indirect_adjacent",
     }
 
+    # Used to match a combinator against the context node, in :not().
+    _reverse_combinator_mapping = {
+        " ": "ancestor::*",
+        ">": "parent::*",
+        "+": "preceding-sibling::*[1]",
+        "~": "preceding-sibling::*",
+    }
+
     attribute_operator_mapping = {
         "exists": "exists",
         "=": "equals",
@@ -307,11 +315,30 @@ class GenericTranslator:
 
     def xpath_negation(self, negation: Negation) -> XPathExpr:
         xpath = self.xpath(negation.selector)
-        sub_xpath = self.xpath(negation.subselector)
+        condition = self._xpath_match_condition(negation.subselector)
+        if condition is None:
+            # The argument matches every element, so :not() matches none.
+            return xpath.add_condition("0")
+        return xpath.add_condition(f"not({condition})")
+
+    def _xpath_match_condition(self, selector: Tree) -> str | None:
+        """Return a condition that holds for the elements matching *selector*,
+        or None if that is every element.
+
+        Unlike xpath(), which walks a selector from left to right, this
+        matches the whole selector against the context node, using reverse
+        axes for combinators.
+        """
+        if isinstance(selector, CombinedSelector):
+            axis = self._reverse_combinator_mapping[selector.combinator]
+            left = self._xpath_match_condition(selector.selector)
+            if left is not None:
+                axis = f"{axis}[{left}]"
+            right = self._xpath_match_condition(selector.subselector)
+            return axis if right is None else f"{right} and {axis}"
+        sub_xpath = self.xpath(selector)
         sub_xpath.add_name_test()
-        if sub_xpath.condition:
-            return xpath.add_condition(f"not({sub_xpath.condition})")
-        return xpath.add_condition("0")
+        return sub_xpath.condition or None
 
     def xpath_relation(self, relation: Relation) -> XPathExpr:
         xpath = self.xpath(relation.selector)

@@ -254,8 +254,10 @@ class Negation:
 
     def canonical(self) -> str:
         subsel = self.subselector.canonical()
-        if len(subsel) > 1:
-            subsel = subsel.lstrip("*")
+        # Strip a redundant universal selector from e.g. "*.foo" (but not
+        # from e.g. "* > foo").
+        if len(subsel) > 1 and subsel[0] == "*" and subsel[1] in "#.[:":
+            subsel = subsel[1:]
         return f"{self.selector.canonical()}:not({subsel})"
 
     def specificity(self) -> tuple[int, int, int]:
@@ -688,16 +690,32 @@ def parse_simple_selector(
                 argument, argument_pseudo_element = parse_simple_selector(
                     stream, inside_negation=True
                 )
-                # Whitespace before the closing parenthesis is not a
-                # descendant combinator.
-                stream.skip_whitespace()
-                next_ = stream.next()
-                if argument_pseudo_element:
-                    raise SelectorSyntaxError(
-                        f"Got pseudo-element ::{argument_pseudo_element} inside :not() at {next_.pos}"
+                while 1:
+                    # Whitespace before the closing parenthesis is not a
+                    # descendant combinator.
+                    stream.skip_whitespace()
+                    peek = stream.peek()
+                    if argument_pseudo_element:
+                        raise SelectorSyntaxError(
+                            f"Got pseudo-element ::{argument_pseudo_element} inside :not() at {peek.pos}"
+                        )
+                    if peek == ("DELIM", ")"):
+                        stream.next()
+                        break
+                    if peek.is_delim("+", ">", "~"):
+                        argument_combinator = cast("str", stream.next().value)
+                        stream.skip_whitespace()
+                    elif peek.type == "EOF" or peek.is_delim(","):
+                        # A selector list is not supported in :not().
+                        raise SelectorSyntaxError(f"Expected ')', got {peek}")
+                    else:
+                        argument_combinator = " "
+                    next_selector, argument_pseudo_element = parse_simple_selector(
+                        stream, inside_negation=True
                     )
-                if next_ != ("DELIM", ")"):
-                    raise SelectorSyntaxError(f"Expected ')', got {next_}")
+                    argument = CombinedSelector(
+                        argument, argument_combinator, next_selector
+                    )
                 result = Negation(result, argument)
             elif ident.lower() == "has":
                 combinator, arguments = parse_relative_selector(stream)
