@@ -5,26 +5,27 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
-        - python-version: 3
-          env:
-            TOXENV: black
-        - python-version: 3
-          env:
-            TOXENV: flake8
-        - python-version: 3
+        - python-version: 3.14
           env:
             TOXENV: pylint
-        - python-version: 3
+        - python-version: 3.14  # Keep in sync with .readthedocs.yml
           env:
-            TOXENV: security
+            TOXENV: docs
+        - python-version: 3.14
+          env:
+            TOXENV: typing
+        - python-version: 3.14
+          env:
+            TOXENV: twinecheck
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v6
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -34,3 +35,9 @@ jobs:
         pip install -U pip
         pip install -U tox
         tox
+
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: pre-commit/action@v3.0.1
