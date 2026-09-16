@@ -1087,10 +1087,7 @@ class TestCssselect(unittest.TestCase):
 
     def test_input_preprocessing(self) -> None:
         # CSS Syntax §3.3: a raw U+0000 or surrogate code point (not an
-        # escape) is folded to U+FFFD before tokenizing, so it cannot leak
-        # into the generated XPath. Before this, lxml rejected the result
-        # with "no NULL bytes or control characters" / "surrogates not
-        # allowed".
+        # escape) is folded to U+FFFD before tokenizing.
         css_to_xpath = GenericTranslator().css_to_xpath
         assert css_to_xpath('*[aval="x\x00y"]') == (
             "descendant-or-self::*[@aval = 'x�y']"
