@@ -1085,6 +1085,22 @@ class TestCssselect(unittest.TestCase):
         assert unescape_ident(r"\41 B") == "AB"
         assert unescape_ident(r"\-foo") == "-foo"
 
+    def test_input_preprocessing(self) -> None:
+        # CSS Syntax §3.3: a raw U+0000 or surrogate code point (not an
+        # escape) is folded to U+FFFD before tokenizing.
+        css_to_xpath = GenericTranslator().css_to_xpath
+        assert css_to_xpath('*[aval="x\x00y"]') == (
+            "descendant-or-self::*[@aval = 'x�y']"
+        )
+        assert css_to_xpath('*[aval="x\ud800y"]') == (
+            "descendant-or-self::*[@aval = 'x�y']"
+        )
+        assert css_to_xpath(':contains("x\udfffy")') == (
+            "descendant-or-self::*[contains(., 'x�y')]"
+        )
+        # A raw NUL in an identifier becomes a valid U+FFFD name character.
+        assert str(next(tokenize("foo\x00bar"))) == "<IDENT 'foo�bar' at 0>"
+
     def test_xpath_pseudo_elements(self) -> None:
         class CustomTranslator(GenericTranslator):
             def xpath_pseudo_element(
