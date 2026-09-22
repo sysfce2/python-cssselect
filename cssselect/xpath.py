@@ -175,7 +175,7 @@ class GenericTranslator:
         "^=": "prefixmatch",
         "$=": "suffixmatch",
         "*=": "substringmatch",
-        "!=": "different",  # XXX Not in Level 3 but meh
+        "!=": "different",  # not part of Selectors Level 3, but widely supported
     }
 
     #: The attribute used for ID selectors depends on the document language:
@@ -412,7 +412,6 @@ class GenericTranslator:
             getattr(self, method_name, None),
         )
         if not method:
-            # TODO: better error message for pseudo-elements?
             raise ExpressionError(f"The pseudo-class :{pseudo.ident} is unknown")
         return method(self.xpath(pseudo.selector))
 
